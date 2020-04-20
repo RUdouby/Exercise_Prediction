@@ -1,0 +1,102 @@
+---
+output: html_document
+---
+
+```{r setup, include=FALSE}
+        knitr::opts_chunk$set(echo = TRUE)
+        library(dplyr)
+        library(caret)
+```
+
+# Exercise Prediction Report
+
+## Executive Summary
+
+The goal of this exercise is to take training data on different techniques used for Dumbbell Bicep Curls and create a prediction model to be used on a test dataset. The training data was first cleaned to remove variables with NA's and descriptive variables. We fit three different models to the training data using five-fold cross validation. The random forest model had the highest in sample accuracy at 99.48%.
+
+Special thanks to the following individuals for allowing the use of their data: Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+## Exploratory Analysis
+
+``` {r explore}
+        traindat <- read.csv("pml-training.csv")
+        testdat <- read.csv("pml-testing.csv")
+        dim(traindat)
+        str(traindat)
+        unique(traindat$classe)
+```
+
+The data consists of measurements for five different techniques used to perform Dumbbell Biceps Curls. To measure the effectiveness of each technique accelerometers were placed at four locations: the participant's belt, arm, and forearm, as well as on the dumbbell itself. Techniques are stored in the "classe" variable. The options of performing the exercise are: 
+
+        (A) exactly according to the recommended specification (i.e. the correct technique)
+        (B) throwing elbows to the front
+        (C) lifting the dumbbells only halfway
+        (D) lowering the dumbbells only halfway
+        (E) throwing the hips to the front
+
+## Preprocessing
+
+Need to remove some variables, specificallly some measurement ones that have NAs in them. Otherwise the train function will not be able to run. First we are going to remove any columns with over 50% NA's. Then we will select only numeric columns, finally removing the first four columns that while umeric are really descriptive in nature.
+
+``` {r clean}
+        not_relevant <- c(1:4)
+        training <- traindat[, colSums(is.na(traindat)) < length(traindat$X) * 0.5]
+        num_cols <- training %>% select_if(is.numeric) %>% colnames()
+        training <- training %>% select(num_cols, classe) %>% select(-not_relevant)
+```
+
+
+## Cross Validation
+
+We would like to test our model on an independent data set since predicting on the same training set used to create our model will provide overly optimistic accuracy. But we cannot use the testing set otherwise it would become part of our model fitting process. Instead we can split up the training data into independent subgroups and check the testing accuracy on these new subgroups. This process is known as cross validation.
+
+For this report we will use k-fold cross validation. This is a commonly used technique that breaks the dataset into k number of groups. The model is fitted on k-1 groups and tested on the remaining group. This is performed k times and the results and errors are averaged. Five to ten folds is considered common practice.
+
+```{r cv}
+        fitControl <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
+```
+
+## Fitting  Models
+
+We will fit models to the training data using the following methods: random forest, boosting, and linear discriminant analysis. We chose not to use regularized regression since the lesson said it did not perform as well as random forests or boosting. In order to speed up the computation time for the random forest fit, we run parallel processors.
+
+```{r parallel}
+        library(parallel)
+        library(doParallel)
+        cluster <- makeCluster(detectCores() - 1)
+        registerDoParallel(cluster)
+```
+
+```{r fit, cache = TRUE}
+        ldaFit <- train(classe ~ ., method = "lda", data = training, trControl = fitControl) 
+        boostFit <- train(classe ~ ., method = "gbm", data = training, trControl = fitControl, verbose = FALSE)
+        rfFit <- train(classe ~ ., method = "rf", data = training, trControl = fitControl)
+        
+        # shut down the parallel processing cluster
+        stopCluster(cluster)
+        registerDoSEQ()
+```
+
+Now we need to check our model against the held out folds of the cross validation.
+
+```{r check}
+        confusionMatrix(ldaFit)
+        confusionMatrix(boostFit)
+        confusionMatrix(rfFit)
+```
+
+The random forest model was the most accurate in cross validation testing with 99.48% accuracy. The out of sample error will be always be higher than the in sample error due to overfitting on the training data where we incorrectly interpret noise of the training data as signal. We will use this method to predict which technique is used by each observation in the testing data.   
+
+``` {r test}
+        rfRes <- predict(rfFit, newdata = testdat)
+        results <- data.frame(Question_Number = c(1:20), Technique = rfRes)
+        results
+```
+
+## Conclusion
+
+The random forest model produced the highest cross validation accuracy at 99.48%. While we do not expect the model to be this accurate on out of sample testing, we think it is sufficient to submit our test answers to the end of course quiz. 
+
+One additional thing we could have looked into: there were six participants used in the training data, would it have been more helpful to slice the data based on participant? That way we would be using the measurements of five participants to predict the sixth participant's exercise. This may more accurately predict the out of sample error as long as we were given the participant for each observation of the test data.
+
+
